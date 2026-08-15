@@ -119,37 +119,39 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**")
 
         max_attempts = 2
-        response = None
+        response_text = None
         
         for attempt in range(1, max_attempts + 1):
             try:
-                # استفاده از کلاینت ناهمگام ناتیو (client.aio) بدون ریسک گیر کردن ترد
-                response = await asyncio.wait_for(
+                res = await asyncio.wait_for(
                     client.aio.models.generate_content(
                         model='gemini-flash-latest',
                         contents=[img, ADVANCED_PA_PROMPT]
                     ),
-                    timeout=30.0
+                    timeout=35.0
                 )
-                if response and response.text:
+                if res and res.text:
+                    response_text = res.text
                     break
-            except Exception:
+            except Exception as e:
+                print(f"[API ERROR - Attempt {attempt}]: {e}")
                 if attempt < max_attempts:
                     await status_message.edit_text("⏳ **ترافیک سرور بالا است؛ در حال بازخوانی اطلاعات...**")
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(2.0)
         
         if os.path.exists(file_path):
             os.remove(file_path)
 
-        if response and response.text:
+        if response_text:
             try:
-                await status_message.edit_text(response.text, parse_mode="Markdown")
+                await status_message.edit_text(response_text, parse_mode="Markdown")
             except Exception:
-                await status_message.edit_text(response.text)
+                await status_message.edit_text(response_text)
         else:
             await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**")
 
-    except Exception:
+    except Exception as sys_err:
+        print(f"[SYSTEM ERROR]: {sys_err}")
         if os.path.exists(file_path):
             os.remove(file_path)
         await status_message.edit_text("⚠️ **پاسخ‌دهی سرور بیش از حد طولانی شد.**\nلطفاً چند ثانیه بعد مجدداً تصویر را ارسال کنید.")
@@ -172,7 +174,7 @@ def main():
     
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is running with native async client (client.aio)...")
+    print("Bot is running with full error tracing...")
     app.run_polling()
 
 if __name__ == "__main__":
