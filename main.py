@@ -1,11 +1,14 @@
 import os
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 from PIL import Image
 import io
 
+# تنظیم لاگ‌ها
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -39,7 +42,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(response.text)
 
+# سرور ساختگی برای تایید Health Check در Render Web Service
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
 def main():
+    # اجرای سرور وب در پس‌زمینه
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
