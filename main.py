@@ -1,6 +1,6 @@
 """
-Telegram Trading Analysis Bot using Gemini 2.5 Flash API.
-Architecture: Async/Non-blocking, In-Memory Image I/O, Modular Prompt & Exponential Retry.
+Telegram Trading Analysis Bot using Gemini API.
+Architecture: Async/Non-blocking with Thread Execution (Fixes Event Loop Deadlocks).
 Author: Senior Software Engineer & Code Architect
 """
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONSTANTS & CONFIGURATION ---
 MAX_IMAGE_DIMENSION = 1024
-GEMINI_TIMEOUT = 35.0
+GEMINI_TIMEOUT = 45.0
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -115,9 +115,6 @@ def load_prompt(file_path: str = "prompt.txt") -> str:
 
 ADVANCED_PA_PROMPT = load_prompt()
 
-# Gemini Client Initialization
-client: Optional[genai.Client] = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
 
 # --- HEALTH CHECK SERVER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -148,6 +145,26 @@ def process_image_to_bytes(image_bytes: bytes) -> bytes:
         output_buffer = io.BytesIO()
         img.save(output_buffer, format="JPEG", quality=85)
         return output_buffer.getvalue()
+
+
+def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
+    """Synchronous execution inside worker thread to prevent Event Loop locks."""
+    if not GEMINI_API_KEY:
+        raise ValueError("کلید GEMINI_API_KEY یافت نشد.")
+    
+    local_client = genai.Client(api_key=GEMINI_API_KEY)
+    image_part = types.Part.from_bytes(
+        data=jpeg_bytes,
+        mime_type="image/jpeg"
+    )
+    
+    # نکته: اگر مدل gemini-2.5-flash ارور داد، آن را به gemini-2.0-flash تغییر دهید.
+    response = local_client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=[image_part, prompt]
+    )
+    
+    return response.text if response else ""
 
 
 async def safe_reply_text(status_message, text: str) -> None:
@@ -221,54 +238,52 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     status_message = await update.message.reply_text("📥 **تصویر دریافت شد؛ در حال پردازش اولیه...**", parse_mode="Markdown")
 
     try:
-        if not client:
-            raise ValueError("کلید GEMINI_API_KEY در تنظیمات محیطی سرور تعریف نشده است.")
-
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
 
         await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**", parse_mode="Markdown")
 
+        # 1. پردازش تصویر در Thread
         loop = asyncio.get_running_loop()
         jpeg_bytes = await loop.run_in_executor(
             None, process_image_to_bytes, photo_bytes
         )
 
-        image_part = types.Part.from_bytes(
-            data=jpeg_bytes,
-            mime_type="image/jpeg"
-        )
-
+        # 2. ارسال به Gemini در Thread مجزا
         max_retries = 3
-        response = None
+        response_text = ""
+        last_error = None
 
         for attempt in range(1, max_retries + 1):
             try:
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[image_part, ADVANCED_PA_PROMPT]
-                    ),
+                logger.info(f"شروع درخواست به Gemini (تلاش {attempt})...")
+                response_text = await asyncio.wait_for(
+                    asyncio.to_thread(execute_gemini_request, jpeg_bytes, ADVANCED_PA_PROMPT),
                     timeout=GEMINI_TIMEOUT
                 )
-                if response and response.text:
+                if response_text:
+                    logger.info("پاسخ از Gemini با موفقیت دریافت شد.")
                     break
 
-            except (APIError, asyncio.TimeoutError) as err:
-                logger.warning(f"تلاش {attempt} از {max_retries} ناموفق بود: {err}")
+            except Exception as err:
+                last_error = err
+                logger.warning(f"تلاش {attempt} از {max_retries} با خطا مواجه شد: {err}")
                 if attempt < max_retries:
-                    await asyncio.sleep(attempt * 2)
-                else:
-                    raise err
+                    await asyncio.sleep(2)
 
-        if response and response.text:
-            await safe_reply_text(status_message, response.text)
+        # اگر بعد از ۳ تلاش هیچ پاسخی نگرفتیم، آخرین خطا Re-raise می‌شود
+        if not response_text and last_error:
+            raise last_error
+
+        # 3. ارسال پاسخ نهایی
+        if response_text:
+            await safe_reply_text(status_message, response_text)
         else:
             await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**", parse_mode="Markdown")
 
     except asyncio.TimeoutError:
-        logger.error("Gemini API Request timed out after all retries.")
-        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
+        logger.error("Gemini API Request timed out.")
+        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً چند لحظه بعد مجدداً امتحان کنید.")
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
