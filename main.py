@@ -113,7 +113,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
         
-        # بهینه‌سازی ابعاد عکس برای افزایش سرعت پردازش
         img = Image.open(file_path)
         img.thumbnail((1024, 1024))
 
@@ -124,22 +123,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for attempt in range(1, max_attempts + 1):
             try:
+                # استفاده از کلاینت ناهمگام ناتیو (client.aio) بدون ریسک گیر کردن ترد
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        client.models.generate_content,
+                    client.aio.models.generate_content(
                         model='gemini-flash-latest',
                         contents=[img, ADVANCED_PA_PROMPT]
                     ),
-                    timeout=40.0
+                    timeout=30.0
                 )
                 if response and response.text:
                     break
-            except Exception as attempt_err:
+            except Exception:
                 if attempt < max_attempts:
                     await status_message.edit_text("⏳ **ترافیک سرور بالا است؛ در حال بازخوانی اطلاعات...**")
-                    await asyncio.sleep(2.0)
-                else:
-                    raise attempt_err
+                    await asyncio.sleep(1.5)
         
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -175,7 +172,7 @@ def main():
     
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is running with optimized image sizing and higher latency tolerance...")
+    print("Bot is running with native async client (client.aio)...")
     app.run_polling()
 
 if __name__ == "__main__":
