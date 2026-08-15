@@ -1,6 +1,6 @@
 """
-Telegram Trading Analysis Bot using Gemini 2.5 Flash API.
-Architecture: Async/Non-blocking with Thread Execution & Advanced Diagnostic Debugging.
+Telegram Trading Analysis Bot using Gemini API.
+Features: Micro-Diagnostic Logging, Pre-flight Testing, Dynamic Model Fallback, and Full Error Tracing.
 Author: Senior Software Engineer & Code Architect
 """
 
@@ -9,7 +9,7 @@ import io
 import logging
 import asyncio
 import traceback
-from typing import Optional
+from typing import List
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 
@@ -36,13 +36,18 @@ logger = logging.getLogger(__name__)
 
 # --- CONSTANTS & CONFIGURATION ---
 MAX_IMAGE_DIMENSION = 1024
-GEMINI_TIMEOUT = 45.0
+GEMINI_TIMEOUT = 45.0  # افزایش زمان به ۴۵ ثانیه برای تحلیل‌های سنگین SMC
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-# Default Fallback Prompt
+# لیست مدل‌های اولویت‌بندی‌شده همراه با حذف تکرارهای احتمالی جهت جلوگیری از خطای 404
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "").strip()
+raw_candidates = [PRIMARY_MODEL, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+CANDIDATE_MODELS: List[str] = list(dict.fromkeys([m for m in raw_candidates if m]))
+
+# Default Prompt Strategy
 DEFAULT_PROMPT = """You are a Lead Institutional Technical Analyst specializing in Price Action, Smart Money Concepts (SMC), and RTM for XAUUSD (Gold). 
 Analyze this chart image with surgical precision and structural depth. Produce a clean, highly structured report entirely in Persian (Farsi).
 
@@ -149,22 +154,60 @@ def process_image_to_bytes(image_bytes: bytes) -> bytes:
 
 
 def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
-    """Synchronous execution inside worker thread to prevent Event Loop locks."""
+    """Synchronous execution with dynamic model fallback."""
     if not GEMINI_API_KEY:
-        raise ValueError("کلید GEMINI_API_KEY در تنظیمات (Environment Variables) یافت نشد.")
+        raise ValueError("متغیر GEMINI_API_KEY در Environment Variables مقداردهی نشده است.")
     
-    local_client = genai.Client(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
     image_part = types.Part.from_bytes(
         data=jpeg_bytes,
         mime_type="image/jpeg"
     )
+
+    last_err = None
+    for model_name in CANDIDATE_MODELS:
+        try:
+            logger.info(f"در حال تلاش برای فراخوانی مدل: {model_name}")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[image_part, prompt]
+            )
+            if response and response.text:
+                logger.info(f"تحلیل با موفقیت از مدل {model_name} دریافت شد.")
+                return response.text
+        except APIError as e:
+            last_err = e
+            if "404" in str(e) or "NOT_FOUND" in str(e):
+                logger.warning(f"مدل {model_name} یافت نشد (404). سوییچ به مدل بعدی...")
+                continue
+            raise e
+        except Exception as e:
+            last_err = e
+            raise e
+
+    if last_err:
+        raise last_err
+    return ""
+
+
+def test_gemini_connection() -> str:
+    if not GEMINI_API_KEY:
+        raise ValueError("متغیر GEMINI_API_KEY در Environment Variables مقداردهی نشده است.")
     
-    response = local_client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=[image_part, prompt]
-    )
+    client = genai.Client(api_key=GEMINI_API_KEY)
     
-    return response.text if response else ""
+    for model_name in CANDIDATE_MODELS:
+        try:
+            res = client.models.generate_content(
+                model=model_name,
+                contents="Say 'API Connection Successful' in English."
+            )
+            if res and res.text:
+                return f"[{model_name}]: {res.text.strip()}"
+        except Exception:
+            continue
+            
+    return "No valid model responded."
 
 
 async def safe_reply_text(status_message, text: str) -> None:
@@ -186,8 +229,30 @@ async def safe_reply_text(status_message, text: str) -> None:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text(
-            "👑 **سلام! به ربات سیگنال طلای امین خوش اومدید.**\n\n"
-            "📈 عکس چارت طلای مد نظرتون رو بفرستید تا براتون تحلیل کنم.",
+            "👑 **ربات تحلیل طلا فعال است.**\n\n"
+            "▫️ برای تست سریع اتصال هوش مصنوعی دستور /test را بزنید.\n"
+            "▫️ برای تحلیل چارت، عکس چارت طلا را ارسال کنید.",
+            parse_mode="Markdown"
+        )
+
+
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    status_msg = await update.message.reply_text("🔍 **در حال تست ارتباط با API جمینای...**", parse_mode="Markdown")
+    try:
+        loop = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, test_gemini_connection),
+            timeout=15.0
+        )
+        await status_msg.edit_text(f"✅ **تست موفقیت‌آمیز بود!**\n\nپاسخ گوگل:\n`{result.strip()}`", parse_mode="Markdown")
+    except Exception as e:
+        tb = traceback.format_exc()
+        await status_msg.edit_text(
+            f"❌ **تست اتصال با خطا مواجه شد!**\n\n"
+            f"**نوع خطا:** `{type(e).__name__}`\n"
+            f"**جزئیات:**\n```python\n{tb[-1500:]}\n```",
             parse_mode="Markdown"
         )
 
@@ -230,77 +295,73 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER WITH DETAILED DIAGNOSTICS ---
+# --- PHOTO HANDLER WITH STEP-BY-STEP DIAGNOSTICS ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.photo:
         return
 
-    status_message = await update.message.reply_text("📥 **تصویر دریافت شد؛ در حال پردازش اولیه...**", parse_mode="Markdown")
+    status_message = await update.message.reply_text("🔹 [۱/۵] **دریافت فایل تصویر از تلگرام...**", parse_mode="Markdown")
 
     try:
+        # گام ۱: دانلود تصویر
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
-
-        await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**", parse_mode="Markdown")
-
-        # 1. پردازش تصویر در Thread
+        
+        # گام ۲: فشرده‌سازی
+        await status_message.edit_text("🔹 [۲/۵] **تغییر ابعاد و فشرده‌سازی عکس...**", parse_mode="Markdown")
         loop = asyncio.get_running_loop()
-        jpeg_bytes = await loop.run_in_executor(
-            None, process_image_to_bytes, photo_bytes
+        jpeg_bytes = await loop.run_in_executor(None, process_image_to_bytes, photo_bytes)
+
+        # گام ۳: بررسی API Key
+        await status_message.edit_text("🔹 [۳/۵] **اعتبارسنجی تنظیمات کلید API...**", parse_mode="Markdown")
+        if not GEMINI_API_KEY:
+            raise ValueError("متغیر GEMINI_API_KEY روی سرور تعریف نشده است.")
+
+        # گام ۴: ارسال درخواست به Gemini
+        await status_message.edit_text("🔹 [۴/۵] **کالبدشکافی چارت با هوش مصنوعی (حداکثر ۴۵ ثانیه)...**", parse_mode="Markdown")
+        
+        response_text = await asyncio.wait_for(
+            loop.run_in_executor(None, execute_gemini_request, jpeg_bytes, ADVANCED_PA_PROMPT),
+            timeout=GEMINI_TIMEOUT
         )
 
-        # 2. ارسال به Gemini با مدیریت صحیح خطاها
-        max_retries = 3
-        response_text = ""
-        captured_error = None
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"شروع درخواست به Gemini (تلاش {attempt})...")
-                response_text = await asyncio.wait_for(
-                    asyncio.to_thread(execute_gemini_request, jpeg_bytes, ADVANCED_PA_PROMPT),
-                    timeout=GEMINI_TIMEOUT
-                )
-                if response_text:
-                    logger.info("پاسخ از Gemini با موفقیت دریافت شد.")
-                    break
-
-            except Exception as err:
-                captured_error = err
-                logger.warning(f"تلاش {attempt} از {max_retries} با خطا مواجه شد: {err}")
-                if attempt < max_retries:
-                    await asyncio.sleep(2)
-
-        if not response_text and captured_error:
-            raise captured_error
-
-        # 3. ارسال پاسخ نهایی
-        if response_text:
+        # گام ۵: نمایش پاسخ
+        await status_message.edit_text("🔹 [۵/۵] **دریافت پاسخ؛ در حال تنظیم قالب تلگرام...**", parse_mode="Markdown")
+        
+        if response_text and response_text.strip():
             await safe_reply_text(status_message, response_text)
         else:
-            await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**", parse_mode="Markdown")
+            await status_message.edit_text("⚠️ **پاسخ دریافتی از Gemini خالی بود.**", parse_mode="Markdown")
 
     except asyncio.TimeoutError:
-        logger.error("Gemini API Request timed out.")
-        await status_message.edit_text("⏱️ **خطای زمان‌بندی (Timeout):** پاسخ از هوش مصنوعی بیش از ۴۵ ثانیه طول کشید.")
+        logger.error("Gemini Timeout Error")
+        await status_message.edit_text(
+            "🛑 **خطای توقف زمان (Timeout Error):**\n"
+            "ارسال درخواست به گوگل بیش از ۴۵ ثانیه طول کشید. احتمالاً ترافیک گوگل بالاست یا سرور با کندی شبکه مواجه شده است.",
+            parse_mode="Markdown"
+        )
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
-        err_details = f"⚠️ **خطای Gemini API:**\n```\nType: {type(api_err).__name__}\nMessage: {str(api_err)}\n```"
-        try:
-            await status_message.edit_text(err_details, parse_mode="Markdown")
-        except Exception:
-            await status_message.edit_text(f"⚠️ **خطای Gemini API:**\n{str(api_err)}")
+        err_msg = (
+            f"❌ **خطای رسمی Gemini API:**\n"
+            f"▫️ **نوع خطا:** `{type(api_err).__name__}`\n"
+            f"▫️ **متن پیام:**\n```\n{str(api_err)}\n```"
+        )
+        await status_message.edit_text(err_msg, parse_mode="Markdown")
 
     except Exception as sys_err:
         tb_str = traceback.format_exc()
         logger.error(f"Full Error Traceback:\n{tb_str}")
-        
-        detailed_sys_msg = f"⚠️ **خطای دقیق سیستمی:**\n```python\n{tb_str[-2500:]}\n```"
+        err_msg = (
+            f"❌ **خطای سیستمی رخ داد:**\n"
+            f"▫️ **نوع استثنا:** `{type(sys_err).__name__}`\n"
+            f"▫️ **ردیابی خط کد (Traceback):**\n```python\n{tb_str[-2000:]}\n```"
+        )
         try:
-            await status_message.edit_text(detailed_sys_msg, parse_mode="Markdown")
+            await status_message.edit_text(err_msg, parse_mode="Markdown")
         except Exception:
-            await status_message.edit_text(f"⚠️ **خطای سیستم:**\n{tb_str[-2000:]}")
+            await status_message.edit_text(f"❌ **خطا در اجرای برنامه:**\n{str(sys_err)}")
 
 
 # --- ENTRY POINT ---
@@ -314,13 +375,14 @@ def main() -> None:
     app: Application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("test", test_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("signal", signal_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    logger.info("Bot successfully initialized and running polling...")
+    logger.info("Bot started successfully with diagnostic tools and fallback models.")
     app.run_polling()
 
 
