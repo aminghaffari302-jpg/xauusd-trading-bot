@@ -14,6 +14,7 @@ from threading import Thread
 
 from PIL import Image
 from google import genai
+from google.genai import types
 from google.genai.errors import APIError
 from telegram import Update
 from telegram.ext import (
@@ -142,22 +143,24 @@ def start_health_check_server() -> None:
 
 
 # --- HELPER FUNCTIONS ---
-def process_image_in_memory(image_bytes: bytes) -> Image.Image:
+def process_image_to_bytes(image_bytes: bytes) -> bytes:
     """
-    Resizes image using Pillow entirely in RAM.
-    Converts image to RGB to prevent RGBA/Alpha channel API errors.
+    Resizes image using Pillow in RAM and converts to JPEG raw bytes.
+    This ensures 100% compatibility with Gemini Async SDK.
     """
-    img = Image.open(io.BytesIO(image_bytes))
-    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    return img
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        output_buffer = io.BytesIO()
+        img.save(output_buffer, format="JPEG", quality=85)
+        return output_buffer.getvalue()
 
 
 async def safe_reply_text(status_message, text: str) -> None:
     """
     Safely sends long text messages with chunking and Telegram limit handling.
-    Edits initial status message for chunk 1 and replies with new messages for remaining chunks.
     """
     chunks = [text[i:i + MAX_TELEGRAM_MESSAGE_LENGTH] for i in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH)]
     for index, chunk in enumerate(chunks):
@@ -175,7 +178,6 @@ async def safe_reply_text(status_message, text: str) -> None:
 
 # --- TELEGRAM COMMAND HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /start command."""
     if update.message:
         await update.message.reply_text(
             "👑 **سلام! به ربات سیگنال طلای امین خوش اومدید.**\n\n"
@@ -185,7 +187,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /analyze command."""
     if update.message:
         await update.message.reply_text(
             "📊 **دریافت جدیدترین تحلیل طلا**\n\n"
@@ -195,7 +196,6 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /signal command."""
     if update.message:
         await update.message.reply_text(
             "🎯 **دریافت وضعیت سیگنال‌های فعلی**\n\n"
@@ -205,7 +205,6 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /status command."""
     if update.message:
         await update.message.reply_text(
             "📊 **وضعیت اتصال به متاتریدر (MetaTrader):**\n\n"
@@ -215,7 +214,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /help command."""
     if update.message:
         await update.message.reply_text(
             "❓ **راهنمای استفاده از ربات:**\n\n"
@@ -226,9 +224,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER WITH RETRY LOGIC ---
+# --- PHOTO HANDLER WITH DETAILED ERROR REPORTING ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes incoming chart images completely in-memory using Gemini 2.0 Flash with retry logic."""
+    """Processes incoming chart images using Gemini 2.0 Flash with byte-level payload."""
     if not update.message or not update.message.photo:
         return
 
@@ -239,19 +237,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if not client:
             raise ValueError("کلید GEMINI_API_KEY در تنظیمات محیطی سرور تعریف نشده است.")
 
-        # 2. Download Image into RAM (BytesIO)
+        # 2. Download Image into RAM
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
 
         await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**", parse_mode="Markdown")
 
-        # 3. Offload CPU-bound Image Resizing to ThreadPool Executor
+        # 3. Process Image into Pure JPEG Bytes in ThreadPool
         loop = asyncio.get_running_loop()
-        processed_img = await loop.run_in_executor(
-            None, process_image_in_memory, photo_bytes
+        jpeg_bytes = await loop.run_in_executor(
+            None, process_image_to_bytes, photo_bytes
         )
 
-        # 4. Request Gemini API with Exponential Backoff Retry (Up to 3 Attempts)
+        # 4. Construct Explicit Part Payload for Gemini API
+        image_part = types.Part.from_bytes(
+            data=jpeg_bytes,
+            mime_type="image/jpeg"
+        )
+
+        # 5. Async Call with Retry Logic
         max_retries = 3
         response = None
 
@@ -260,7 +264,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 response = await asyncio.wait_for(
                     client.aio.models.generate_content(
                         model='gemini-2.0-flash',
-                        contents=[processed_img, ADVANCED_PA_PROMPT]
+                        contents=[image_part, ADVANCED_PA_PROMPT]
                     ),
                     timeout=GEMINI_TIMEOUT
                 )
@@ -274,7 +278,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 else:
                     raise err
 
-        # 5. Response Dispatch
+        # 6. Response Dispatch
         if response and response.text:
             await safe_reply_text(status_message, response.text)
         else:
@@ -282,14 +286,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     except asyncio.TimeoutError:
         logger.error("Gemini API Request timed out after all retries.")
-        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی به دلیل شلوغی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
+        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
-        if "429" in str(api_err):
-            await status_message.edit_text("⚠️ **محدودیت تعداد درخواست:** سهمیه پردازش لحظه‌ای پر شده است. لطفاً ۳۰ ثانیه صبر کرده و دوباره عکس بفرستید.")
-        else:
-            await status_message.edit_text("⚠️ **خطای موقت سرویس:** ارتباط با هوش مصنوعی برقرار نشد. لطفاً مجدداً تلاش کنید.")
+        # نمایش متن دقیق خطای گوگل در تلگرام برای عیب‌یابی سریع
+        error_msg = str(api_err)[:250]
+        await status_message.edit_text(f"⚠️ **خطای Gemini API:**\n`{error_msg}`", parse_mode="Markdown")
 
     except Exception as sys_err:
         logger.exception("Unexpected system error in handle_photo")
