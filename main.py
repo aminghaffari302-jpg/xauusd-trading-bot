@@ -1,4 +1,5 @@
 import os
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
@@ -47,17 +48,32 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "and potential trading setups. Respond entirely in Persian (Farsi)."
         )
 
-        # Using the latest smart alias to dynamically route to the newest active Flash model
-        response = client.models.generate_content(
-            model='gemini-flash-latest',
-            contents=[img, prompt]
-        )
+        # Retry logic for handling temporary 503 server overload
+        max_retries = 3
+        response = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model='gemini-flash-latest',
+                    contents=[img, prompt]
+                )
+                break
+            except Exception as api_err:
+                if "503" in str(api_err) and attempt < max_retries - 1:
+                    await status_message.edit_text(f"سرور گوگل شلوغ است، تلاش مجدد ({attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(3)
+                else:
+                    raise api_err
         
         # Clean up local image file
         if os.path.exists(file_path):
             os.remove(file_path)
 
-        await status_message.edit_text(response.text)
+        if response and response.text:
+            await status_message.edit_text(response.text)
+        else:
+            await status_message.edit_text("پاسخی از مدل دریافت نشد. دوباره تلاش کنید.")
 
     except Exception as e:
         if os.path.exists(file_path):
