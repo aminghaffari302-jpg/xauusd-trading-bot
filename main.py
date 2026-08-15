@@ -1,5 +1,5 @@
 """
-Telegram Trading Analysis Bot using Gemini 2.0 Flash API.
+Telegram Trading Analysis Bot using Gemini 2.5 Flash API.
 Architecture: Async/Non-blocking, In-Memory Image I/O, Modular Prompt & Exponential Retry.
 Author: Senior Software Engineer & Code Architect
 """
@@ -224,9 +224,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER WITH DETAILED ERROR REPORTING ---
+# --- PHOTO HANDLER WITH DETAILED ERROR REPORTING & RETRY LOGIC ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes incoming chart images using Gemini 2.0 Flash with byte-level payload."""
+    """Processes incoming chart images using Gemini API with byte-level payload and retry mechanism."""
     if not update.message or not update.message.photo:
         return
 
@@ -263,7 +263,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             try:
                 response = await asyncio.wait_for(
                     client.aio.models.generate_content(
-                        model='gemini-2.0-flash',
+                        model='gemini-2.5-flash',
                         contents=[image_part, ADVANCED_PA_PROMPT]
                     ),
                     timeout=GEMINI_TIMEOUT
@@ -284,13 +284,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**", parse_mode="Markdown")
 
-    except asyncio.TimeoutError:
+    except asyncioTimeoutError:
         logger.error("Gemini API Request timed out after all retries.")
         await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
-        # نمایش متن دقیق خطای گوگل در تلگرام برای عیب‌یابی سریع
         error_msg = str(api_err)[:250]
         await status_message.edit_text(f"⚠️ **خطای Gemini API:**\n`{error_msg}`", parse_mode="Markdown")
 
