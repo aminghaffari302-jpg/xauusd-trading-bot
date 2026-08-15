@@ -164,14 +164,12 @@ def main():
 
     app = ApplicationBuilder().token(token).build()
 
-    # ثبت تمامی ۵ دستور منوی تلگرام
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("signal", signal_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("help", help_command))
     
-    # ثبت هندلر عکس
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     print("Bot is running with full interactive menu support...")
