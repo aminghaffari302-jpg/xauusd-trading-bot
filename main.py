@@ -1,7 +1,7 @@
 import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import google.generativeai as genai
+from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from PIL import Image
@@ -19,10 +19,9 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# --- Config Gemini API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY.strip())
+# --- Config Gemini API (New Client) ---
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # --- Bot Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33,17 +32,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_message = await update.message.reply_text("در حال دریافت و تحلیل چارت توسط Gemini...")
+    file_path = "chart.jpg"
     try:
         # Download photo
         photo_file = await update.message.photo[-1].get_file()
-        file_path = "chart.jpg"
         await photo_file.download_to_drive(file_path)
 
         # Open image with Pillow
         img = Image.open(file_path)
-
-        # Initialize Gemini model (Updated to gemini-2.0-flash)
-        model = genai.GenerativeModel('gemini-2.0-flash')
 
         prompt = (
             "You are an expert technical analyst specializing in XAUUSD (Gold). "
@@ -51,7 +47,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "and potential trading setups. Respond entirely in Persian (Farsi)."
         )
 
-        response = model.generate_content([prompt, img])
+        # Call Gemini API with the new SDK
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[img, prompt]
+        )
         
         # Clean up local image file
         if os.path.exists(file_path):
@@ -60,8 +60,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text(response.text)
 
     except Exception as e:
-        if os.path.exists("chart.jpg"):
-            os.remove("chart.jpg")
+        if os.path.exists(file_path):
+            os.remove(file_path)
         await status_message.edit_text(f"خطا در تحلیل چارت: {str(e)}")
 
 def main():
