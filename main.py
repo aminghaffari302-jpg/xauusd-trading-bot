@@ -47,9 +47,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "and potential trading setups. Respond entirely in Persian (Farsi)."
         )
 
-        # Call Gemini API with the new SDK
+        # Using the latest smart alias to dynamically route to the newest active Flash model
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-flash-latest',
             contents=[img, prompt]
         )
         
