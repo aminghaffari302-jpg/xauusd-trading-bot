@@ -1,3 +1,5 @@
+این کد کامل main.py شامل تمامی ۵ دستور منو همراه با پاسخ سفارشی‌سازی‌شده برای متاتریدر است:
+```python
 import os
 import asyncio
 import threading
@@ -66,27 +68,56 @@ ADVANCED_PA_PROMPT = (
     "• **هشدار مهم:** [توضیح مختصر در مورد اخبارهای پیش‌رو یا نوسانات طلا]\n"
 )
 
-# --- Bot Handlers ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Command Handlers ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👑 **سلام! به ربات سیگنال طلای امین خوش اومدید.**\n\n"
         "📈 عکس چارت طلای مد نظرتون رو بفرستید تا براتون تحلیل کنم.",
         parse_mode="Markdown"
     )
 
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📊 **دریافت جدیدترین تحلیل طلا**\n\n"
+        "لطفاً تصویر چارت مورد نظر خود را ارسال کنید تا تحلیل SMC اختصاصی آن تولید شود.",
+        parse_mode="Markdown"
+    )
+
+async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎯 **دریافت وضعیت سیگنال‌های فعلی**\n\n"
+        "سیگنال‌های معاملاتی فعال بر روی چارت‌های ارسالی پردازش می‌شوند. عکس چارت جدید خود را بفرستید.",
+        parse_mode="Markdown"
+    )
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📊 **وضعیت اتصال به متاتریدر (MetaTrader):**\n\n"
+        "بزودی در بروزرسانی‌های آینده اضافه میشه😊",
+        parse_mode="Markdown"
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "❓ **راهنمای استفاده از ربات:**\n\n"
+        "۱. یک عکس واضح از چارت طلا (XAUUSD) ارسال کنید.\n"
+        "۲. هوش مصنوعی ساختار بازار، زون‌ها و سناریوهای A+، B و C را محاسبه می‌کند.\n"
+        "۳. سیگنال‌های ورودی به همراه TP و SL را دریافت کنید.",
+        parse_mode="Markdown"
+    )
+
+# --- Photo Handler ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_message = await update.message.reply_text("📥 **تصویر دریافت شد؛ در حال پردازش اولیه...**")
     file_path = f"chart_{update.message.message_id}.jpg"
     
     try:
-        # دانلود تصویر
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
         img = Image.open(file_path)
 
-        await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسا‌یی زون‌های SMC...**")
+        await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**")
 
-        # ساختار تلاش مجدد استاندارد (حداکثر ۲ تلاش با تایم‌آوت ۲۵ ثانیه)
         max_attempts = 2
         response = None
         
@@ -109,11 +140,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     raise attempt_err
         
-        # پاک‌سازی تصویر
         if os.path.exists(file_path):
             os.remove(file_path)
 
-        # ارسال پاسخ نهایی
         if response and response.text:
             try:
                 await status_message.edit_text(response.text, parse_mode="Markdown")
@@ -125,7 +154,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         if os.path.exists(file_path):
             os.remove(file_path)
-        # پیام خطای کاملاً شیک و کاربرپسند بدون نمایش کدهای فنی
         await status_message.edit_text("⚠️ **پاسخ‌دهی سرور بیش از حد طولانی شد.**\nلطفاً چند ثانیه بعد مجدداً تصویر را ارسال کنید.")
 
 def main():
@@ -138,11 +166,20 @@ def main():
 
     app = ApplicationBuilder().token(token).build()
 
-    app.add_handler(CommandHandler("start", start))
+    # ثبت تمامی ۵ دستور منوی تلگرام
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("signal", signal_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("help", help_command))
+    
+    # ثبت هندلر عکس
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is running with optimized professional UX and retry logic...")
+    print("Bot is running with full interactive menu support...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
+```
