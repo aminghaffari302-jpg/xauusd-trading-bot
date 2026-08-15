@@ -20,7 +20,7 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# --- Config Gemini API (New Client) ---
+# --- Config Gemini API ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -75,56 +75,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_message = await update.message.reply_text("🔎 **در حال اسکن چارت و کالبدشکافی ساختار بازار توسط مدل هوشمند...**")
-    file_path = "chart.jpg"
+    status_message = await update.message.reply_text("📥 **تصویر دریافت شد؛ در حال پردازش اولیه...**")
+    file_path = f"chart_{update.message.message_id}.jpg"
+    
     try:
-        # Download photo
+        # دانلود تصویر
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
-
-        # Open image with Pillow
         img = Image.open(file_path)
 
-        # Retry logic for handling temporary 503 server overload
-        max_retries = 3
+        await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسا‌یی زون‌های SMC...**")
+
+        # ساختار تلاش مجدد استاندارد (حداکثر ۲ تلاش با تایم‌آوت ۲۵ ثانیه)
+        max_attempts = 2
         response = None
         
-        for attempt in range(max_retries):
+        for attempt in range(1, max_attempts + 1):
             try:
-                response = client.models.generate_content(
-                    model='gemini-flash-latest',
-                    contents=[img, ADVANCED_PA_PROMPT]
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content,
+                        model='gemini-flash-latest',
+                        contents=[img, ADVANCED_PA_PROMPT]
+                    ),
+                    timeout=25.0
                 )
-                break
-            except Exception as api_err:
-                if "503" in str(api_err) and attempt < max_retries - 1:
-                    await status_message.edit_text(f"⏳ **سرور در حال پردازش سنگین است. تلاش مجدد ({attempt + 1}/{max_retries})...**")
-                    await asyncio.sleep(3)
+                if response and response.text:
+                    break
+            except Exception as attempt_err:
+                if attempt < max_attempts:
+                    await status_message.edit_text("⏳ **ترافیک سرور بالا است؛ در حال بازخوانی اطلاعات...**")
+                    await asyncio.sleep(2.0)
                 else:
-                    raise api_err
+                    raise attempt_err
         
-        # Clean up local image file
+        # پاک‌سازی تصویر
         if os.path.exists(file_path):
             os.remove(file_path)
 
+        # ارسال پاسخ نهایی
         if response and response.text:
             try:
                 await status_message.edit_text(response.text, parse_mode="Markdown")
             except Exception:
                 await status_message.edit_text(response.text)
         else:
-            await status_message.edit_text("❌ پاسخی از مدل دریافت نشد. لطفاً مجدداً تلاش کنید.")
+            await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**")
 
-    except Exception as e:
+    except Exception:
         if os.path.exists(file_path):
             os.remove(file_path)
-        await status_message.edit_text(f"⚠️ **خطا در تحلیل چارت:**\n\n{str(e)}")
+        # پیام خطای کاملاً شیک و کاربرپسند بدون نمایش کدهای فنی
+        await status_message.edit_text("⚠️ **پاسخ‌دهی سرور بیش از حد طولانی شد.**\nلطفاً چند ثانیه بعد مجدداً تصویر را ارسال کنید.")
 
 def main():
-    # Start background HTTP server
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # Telegram Bot Setup
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         print("Error: TELEGRAM_BOT_TOKEN environment variable is missing.")
@@ -135,7 +141,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is starting with customized welcome message...")
+    print("Bot is running with optimized professional UX and retry logic...")
     app.run_polling()
 
 if __name__ == "__main__":
