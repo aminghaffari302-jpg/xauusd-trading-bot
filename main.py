@@ -112,7 +112,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
+        
+        # بهینه‌سازی ابعاد عکس برای افزایش سرعت پردازش
         img = Image.open(file_path)
+        img.thumbnail((1024, 1024))
 
         await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**")
 
@@ -127,7 +130,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         model='gemini-flash-latest',
                         contents=[img, ADVANCED_PA_PROMPT]
                     ),
-                    timeout=25.0
+                    timeout=40.0
                 )
                 if response and response.text:
                     break
@@ -172,7 +175,7 @@ def main():
     
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    print("Bot is running with full interactive menu support...")
+    print("Bot is running with optimized image sizing and higher latency tolerance...")
     app.run_polling()
 
 if __name__ == "__main__":
