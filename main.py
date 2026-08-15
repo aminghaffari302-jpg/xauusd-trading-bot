@@ -41,7 +41,7 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-# Default Fallback Prompt (Used if prompt.txt is missing)
+# Default Fallback Prompt
 DEFAULT_PROMPT = """You are a Lead Institutional Technical Analyst specializing in Price Action, Smart Money Concepts (SMC), and RTM for XAUUSD (Gold). 
 Analyze this chart image with surgical precision and structural depth. Produce a clean, highly structured report entirely in Persian (Farsi).
 
@@ -101,7 +101,6 @@ Follow this EXACT response structure in Persian:
 
 
 def load_prompt(file_path: str = "prompt.txt") -> str:
-    """Loads prompt template from file or falls back to default string."""
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -120,10 +119,8 @@ ADVANCED_PA_PROMPT = load_prompt()
 client: Optional[genai.Client] = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-# --- HEALTH CHECK SERVER (RENDER KEEP-ALIVE) ---
+# --- HEALTH CHECK SERVER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
-    """Lightweight HTTP server handler to satisfy Render keep-alive health checks."""
-
     def do_GET(self) -> None:
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
@@ -131,11 +128,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def log_message(self, format_str: str, *args) -> None:
-        return  # Suppress HTTP logging stdout
+        return
 
 
 def start_health_check_server() -> None:
-    """Runs the HTTP health check server in a background thread."""
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     logger.info(f"Health check HTTP server running on port {port}")
@@ -144,10 +140,6 @@ def start_health_check_server() -> None:
 
 # --- HELPER FUNCTIONS ---
 def process_image_to_bytes(image_bytes: bytes) -> bytes:
-    """
-    Resizes image using Pillow in RAM and converts to JPEG raw bytes.
-    This ensures 100% compatibility with Gemini Async SDK.
-    """
     with Image.open(io.BytesIO(image_bytes)) as img:
         img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
         if img.mode != 'RGB':
@@ -159,9 +151,6 @@ def process_image_to_bytes(image_bytes: bytes) -> bytes:
 
 
 async def safe_reply_text(status_message, text: str) -> None:
-    """
-    Safely sends long text messages with chunking and Telegram limit handling.
-    """
     chunks = [text[i:i + MAX_TELEGRAM_MESSAGE_LENGTH] for i in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH)]
     for index, chunk in enumerate(chunks):
         try:
@@ -176,7 +165,7 @@ async def safe_reply_text(status_message, text: str) -> None:
                 await status_message.reply_text(chunk)
 
 
-# --- TELEGRAM COMMAND HANDLERS ---
+# --- COMMAND HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text(
@@ -224,38 +213,32 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER WITH DETAILED ERROR REPORTING & RETRY LOGIC ---
+# --- PHOTO HANDLER ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes incoming chart images using Gemini API with byte-level payload and retry mechanism."""
     if not update.message or not update.message.photo:
         return
 
     status_message = await update.message.reply_text("📥 **تصویر دریافت شد؛ در حال پردازش اولیه...**", parse_mode="Markdown")
 
     try:
-        # 1. Input Validation
         if not client:
             raise ValueError("کلید GEMINI_API_KEY در تنظیمات محیطی سرور تعریف نشده است.")
 
-        # 2. Download Image into RAM
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
 
         await status_message.edit_text("🧠 **در حال کالبدشکافی چارت و شناسایی زون‌های SMC...**", parse_mode="Markdown")
 
-        # 3. Process Image into Pure JPEG Bytes in ThreadPool
         loop = asyncio.get_running_loop()
         jpeg_bytes = await loop.run_in_executor(
             None, process_image_to_bytes, photo_bytes
         )
 
-        # 4. Construct Explicit Part Payload for Gemini API
         image_part = types.Part.from_bytes(
             data=jpeg_bytes,
             mime_type="image/jpeg"
         )
 
-        # 5. Async Call with Retry Logic
         max_retries = 3
         response = None
 
@@ -278,13 +261,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 else:
                     raise err
 
-        # 6. Response Dispatch
         if response and response.text:
             await safe_reply_text(status_message, response.text)
         else:
             await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**", parse_mode="Markdown")
 
-    except asyncioTimeoutError:
+    except asyncio.TimeoutError:
         logger.error("Gemini API Request timed out after all retries.")
         await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
 
@@ -298,9 +280,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await status_message.edit_text(f"⚠️ **خطای سیستم:**\n`{str(sys_err)[:150]}`", parse_mode="Markdown")
 
 
-# --- APPLICATION ENTRY POINT ---
+# --- ENTRY POINT ---
 def main() -> None:
-    """Bot initialization and execution."""
     Thread(target=start_health_check_server, daemon=True).start()
 
     if not TELEGRAM_BOT_TOKEN:
