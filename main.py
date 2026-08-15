@@ -1,6 +1,6 @@
 """
-Telegram Trading Analysis Bot using Gemini 2.5 Flash API.
-Architecture: Async/Non-blocking with In-Memory Image I/O & Modular Prompt.
+Telegram Trading Analysis Bot using Gemini 2.0 Flash API.
+Architecture: Async/Non-blocking, In-Memory Image I/O, Modular Prompt & Exponential Retry.
 Author: Senior Software Engineer & Code Architect
 """
 
@@ -40,7 +40,7 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-# Default Fallback Prompt (Used if prompt.txt is not found)
+# Default Fallback Prompt (Used if prompt.txt is missing)
 DEFAULT_PROMPT = """You are a Lead Institutional Technical Analyst specializing in Price Action, Smart Money Concepts (SMC), and RTM for XAUUSD (Gold). 
 Analyze this chart image with surgical precision and structural depth. Produce a clean, highly structured report entirely in Persian (Farsi).
 
@@ -100,7 +100,7 @@ Follow this EXACT response structure in Persian:
 
 
 def load_prompt(file_path: str = "prompt.txt") -> str:
-    """Loads prompt from an external file, falling back to default prompt if missing."""
+    """Loads prompt template from file or falls back to default string."""
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -130,7 +130,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def log_message(self, format_str: str, *args) -> None:
-        return  # Suppress HTTP logging to stdout
+        return  # Suppress HTTP logging stdout
 
 
 def start_health_check_server() -> None:
@@ -144,23 +144,20 @@ def start_health_check_server() -> None:
 # --- HELPER FUNCTIONS ---
 def process_image_in_memory(image_bytes: bytes) -> Image.Image:
     """
-    Resizes and converts image using Pillow entirely in RAM.
-    Converts image to RGB and formats cleanly for Gemini API to prevent APIError.
+    Resizes image using Pillow entirely in RAM.
+    Converts image to RGB to prevent RGBA/Alpha channel API errors.
     """
-    with Image.open(io.BytesIO(image_bytes)) as img:
-        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        output_buffer = io.BytesIO()
-        img.save(output_buffer, format="JPEG", quality=85)
-        output_buffer.seek(0)
-        return Image.open(output_buffer)
+    img = Image.open(io.BytesIO(image_bytes))
+    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    return img
 
 
 async def safe_reply_text(status_message, text: str) -> None:
     """
-    Safely sends/updates long text messages with Markdown fallback and Telegram limit handling.
+    Safely sends long text messages with chunking and Telegram limit handling.
+    Edits initial status message for chunk 1 and replies with new messages for remaining chunks.
     """
     chunks = [text[i:i + MAX_TELEGRAM_MESSAGE_LENGTH] for i in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH)]
     for index, chunk in enumerate(chunks):
@@ -229,9 +226,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER ---
+# --- PHOTO HANDLER WITH RETRY LOGIC ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes incoming chart images completely in-memory using Gemini 2.5 Flash."""
+    """Processes incoming chart images completely in-memory using Gemini 2.0 Flash with retry logic."""
     if not update.message or not update.message.photo:
         return
 
@@ -254,28 +251,45 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             None, process_image_in_memory, photo_bytes
         )
 
-        # 4. Non-blocking Async Request to Gemini API
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[processed_img, ADVANCED_PA_PROMPT]
-            ),
-            timeout=GEMINI_TIMEOUT
-        )
+        # 4. Request Gemini API with Exponential Backoff Retry (Up to 3 Attempts)
+        max_retries = 3
+        response = None
 
-        # 5. Response Validation & Dispatch
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model='gemini-2.0-flash',
+                        contents=[processed_img, ADVANCED_PA_PROMPT]
+                    ),
+                    timeout=GEMINI_TIMEOUT
+                )
+                if response and response.text:
+                    break
+
+            except (APIError, asyncio.TimeoutError) as err:
+                logger.warning(f"تلاش {attempt} از {max_retries} ناموفق بود: {err}")
+                if attempt < max_retries:
+                    await asyncio.sleep(attempt * 2)
+                else:
+                    raise err
+
+        # 5. Response Dispatch
         if response and response.text:
             await safe_reply_text(status_message, response.text)
         else:
             await status_message.edit_text("⚠️ **پاسخی دریافت نشد. لطفاً مجدداً تصویر چارت را ارسال کنید.**", parse_mode="Markdown")
 
     except asyncio.TimeoutError:
-        logger.error("Gemini API Request timed out.")
-        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** پاسخ‌دهی هوش مصنوعی بیش از حد طول کشید. لطفاً مجدداً تلاش کنید.")
+        logger.error("Gemini API Request timed out after all retries.")
+        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی به دلیل شلوغی پاسخ نداد. لطفاً ۱ دقیقه بعد مجدداً امتحان کنید.")
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
-        await status_message.edit_text("⚠️ **خطای سرویس هوش مصنوعی:** سرویس پردازش تصویر در حال حاضر پاسخگو نیست.")
+        if "429" in str(api_err):
+            await status_message.edit_text("⚠️ **محدودیت تعداد درخواست:** سهمیه پردازش لحظه‌ای پر شده است. لطفاً ۳۰ ثانیه صبر کرده و دوباره عکس بفرستید.")
+        else:
+            await status_message.edit_text("⚠️ **خطای موقت سرویس:** ارتباط با هوش مصنوعی برقرار نشد. لطفاً مجدداً تلاش کنید.")
 
     except Exception as sys_err:
         logger.exception("Unexpected system error in handle_photo")
