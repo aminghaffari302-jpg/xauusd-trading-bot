@@ -36,15 +36,15 @@ logger = logging.getLogger(__name__)
 
 # --- CONSTANTS & CONFIGURATION ---
 MAX_IMAGE_DIMENSION = 1024
-GEMINI_TIMEOUT = 45.0  # افزایش زمان به ۴۵ ثانیه برای تحلیل‌های سنگین SMC
+GEMINI_TIMEOUT = 45.0  # زمان پاسخ‌دهی ۴۵ ثانیه‌ای برای تحلیل‌های سنگین SMC
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-# لیست مدل‌های اولویت‌بندی‌شده همراه با حذف تکرارهای احتمالی جهت جلوگیری از خطای 404
+# لیست مدل‌های رسمی و رسمی پایداری که در API فعال هستند
 PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "").strip()
-raw_candidates = [PRIMARY_MODEL, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp"]
+raw_candidates = [PRIMARY_MODEL, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 CANDIDATE_MODELS: List[str] = list(dict.fromkeys([m for m in raw_candidates if m]))
 
 # Default Prompt Strategy
@@ -154,7 +154,7 @@ def process_image_to_bytes(image_bytes: bytes) -> bytes:
 
 
 def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
-    """Synchronous execution with dynamic model fallback."""
+    """Execution with active model fallback list."""
     if not GEMINI_API_KEY:
         raise ValueError("متغیر GEMINI_API_KEY در Environment Variables مقداردهی نشده است.")
     
@@ -167,7 +167,7 @@ def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
     last_err = None
     for model_name in CANDIDATE_MODELS:
         try:
-            logger.info(f"در حال تلاش برای فراخوانی مدل: {model_name}")
+            logger.info(f"در حال ارسال درخواست به مدل: {model_name}")
             response = client.models.generate_content(
                 model=model_name,
                 contents=[image_part, prompt]
@@ -175,15 +175,10 @@ def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
             if response and response.text:
                 logger.info(f"تحلیل با موفقیت از مدل {model_name} دریافت شد.")
                 return response.text
-        except APIError as e:
-            last_err = e
-            if "404" in str(e) or "NOT_FOUND" in str(e):
-                logger.warning(f"مدل {model_name} یافت نشد (404). سوییچ به مدل بعدی...")
-                continue
-            raise e
         except Exception as e:
             last_err = e
-            raise e
+            logger.warning(f"عدم موفقیت در فراخوانی مدل {model_name}: {e}. سوییچ به مدل بعدی...")
+            continue
 
     if last_err:
         raise last_err
@@ -207,7 +202,7 @@ def test_gemini_connection() -> str:
         except Exception:
             continue
             
-    return "No valid model responded."
+    return "هیچ مدلی پاسخ نداد. لطفاً API Key خود را بررسی کنید."
 
 
 async def safe_reply_text(status_message, text: str) -> None:
