@@ -1,6 +1,6 @@
 """
-Telegram Trading Analysis Bot using Gemini API.
-Architecture: Async/Non-blocking with Thread Execution (Fixes Event Loop Deadlocks).
+Telegram Trading Analysis Bot using Gemini 2.5 Flash API.
+Architecture: Async/Non-blocking with Thread Execution & Advanced Diagnostic Debugging.
 Author: Senior Software Engineer & Code Architect
 """
 
@@ -8,6 +8,7 @@ import os
 import io
 import logging
 import asyncio
+import traceback
 from typing import Optional
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
@@ -150,7 +151,7 @@ def process_image_to_bytes(image_bytes: bytes) -> bytes:
 def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
     """Synchronous execution inside worker thread to prevent Event Loop locks."""
     if not GEMINI_API_KEY:
-        raise ValueError("کلید GEMINI_API_KEY یافت نشد.")
+        raise ValueError("کلید GEMINI_API_KEY در تنظیمات (Environment Variables) یافت نشد.")
     
     local_client = genai.Client(api_key=GEMINI_API_KEY)
     image_part = types.Part.from_bytes(
@@ -158,7 +159,6 @@ def execute_gemini_request(jpeg_bytes: bytes, prompt: str) -> str:
         mime_type="image/jpeg"
     )
     
-    # نکته: اگر مدل gemini-2.5-flash ارور داد، آن را به gemini-2.0-flash تغییر دهید.
     response = local_client.models.generate_content(
         model='gemini-2.5-flash',
         contents=[image_part, prompt]
@@ -230,7 +230,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-# --- PHOTO HANDLER ---
+# --- PHOTO HANDLER WITH DETAILED DIAGNOSTICS ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.photo:
         return
@@ -249,10 +249,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             None, process_image_to_bytes, photo_bytes
         )
 
-        # 2. ارسال به Gemini در Thread مجزا
+        # 2. ارسال به Gemini با مدیریت صحیح خطاها
         max_retries = 3
         response_text = ""
-        last_error = None
+        captured_error = None
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -266,14 +266,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     break
 
             except Exception as err:
-                last_error = err
+                captured_error = err
                 logger.warning(f"تلاش {attempt} از {max_retries} با خطا مواجه شد: {err}")
                 if attempt < max_retries:
                     await asyncio.sleep(2)
 
-        # اگر بعد از ۳ تلاش هیچ پاسخی نگرفتیم، آخرین خطا Re-raise می‌شود
-        if not response_text and last_error:
-            raise last_error
+        if not response_text and captured_error:
+            raise captured_error
 
         # 3. ارسال پاسخ نهایی
         if response_text:
@@ -283,16 +282,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     except asyncio.TimeoutError:
         logger.error("Gemini API Request timed out.")
-        await status_message.edit_text("⏱️ **خطای زمان‌بندی:** سرور هوش مصنوعی پاسخ نداد. لطفاً چند لحظه بعد مجدداً امتحان کنید.")
+        await status_message.edit_text("⏱️ **خطای زمان‌بندی (Timeout):** پاسخ از هوش مصنوعی بیش از ۴۵ ثانیه طول کشید.")
 
     except APIError as api_err:
         logger.error(f"Gemini API Error: {api_err}")
-        error_msg = str(api_err)[:250]
-        await status_message.edit_text(f"⚠️ **خطای Gemini API:**\n`{error_msg}`", parse_mode="Markdown")
+        err_details = f"⚠️ **خطای Gemini API:**\n```\nType: {type(api_err).__name__}\nMessage: {str(api_err)}\n```"
+        try:
+            await status_message.edit_text(err_details, parse_mode="Markdown")
+        except Exception:
+            await status_message.edit_text(f"⚠️ **خطای Gemini API:**\n{str(api_err)}")
 
     except Exception as sys_err:
-        logger.exception("Unexpected system error in handle_photo")
-        await status_message.edit_text(f"⚠️ **خطای سیستم:**\n`{str(sys_err)[:150]}`", parse_mode="Markdown")
+        tb_str = traceback.format_exc()
+        logger.error(f"Full Error Traceback:\n{tb_str}")
+        
+        detailed_sys_msg = f"⚠️ **خطای دقیق سیستمی:**\n```python\n{tb_str[-2500:]}\n```"
+        try:
+            await status_message.edit_text(detailed_sys_msg, parse_mode="Markdown")
+        except Exception:
+            await status_message.edit_text(f"⚠️ **خطای سیستم:**\n{tb_str[-2000:]}")
 
 
 # --- ENTRY POINT ---
