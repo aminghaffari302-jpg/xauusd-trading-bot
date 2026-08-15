@@ -42,8 +42,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Open image with Pillow
         img = Image.open(file_path)
 
-        # Initialize Gemini model (Updated to gemini-2.5-flash)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # Initialize Gemini model (Updated to gemini-2.0-flash)
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
         prompt = (
             "You are an expert technical analyst specializing in XAUUSD (Gold). "
