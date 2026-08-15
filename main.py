@@ -1,5 +1,3 @@
-این کد کامل main.py شامل تمامی ۵ دستور منو همراه با پاسخ سفارشی‌سازی‌شده برای متاتریدر است:
-```python
 import os
 import asyncio
 import threading
@@ -181,5 +179,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-```
