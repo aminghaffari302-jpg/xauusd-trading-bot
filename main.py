@@ -142,24 +142,25 @@ def start_health_check_server() -> None:
 
 
 # --- HELPER FUNCTIONS ---
-def process_image_in_memory(image_bytes: bytes) -> io.BytesIO:
+def process_image_in_memory(image_bytes: bytes) -> Image.Image:
     """
-    Resizes image using Pillow entirely in RAM (In-Memory).
-    Runs inside ThreadPoolExecutor to prevent blocking the async event loop.
+    Resizes and converts image using Pillow entirely in RAM.
+    Converts image to RGB and formats cleanly for Gemini API to prevent APIError.
     """
     with Image.open(io.BytesIO(image_bytes)) as img:
         img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
         output_buffer = io.BytesIO()
-        fmt = img.format if img.format else "JPEG"
-        img.save(output_buffer, format=fmt)
+        img.save(output_buffer, format="JPEG", quality=85)
         output_buffer.seek(0)
-        return output_buffer
+        return Image.open(output_buffer)
 
 
 async def safe_reply_text(status_message, text: str) -> None:
     """
     Safely sends/updates long text messages with Markdown fallback and Telegram limit handling.
-    Updated: Modifies status_message for part 1, sends new messages for remaining chunks.
     """
     chunks = [text[i:i + MAX_TELEGRAM_MESSAGE_LENGTH] for i in range(0, len(text), MAX_TELEGRAM_MESSAGE_LENGTH)]
     for index, chunk in enumerate(chunks):
@@ -249,14 +250,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # 3. Offload CPU-bound Image Resizing to ThreadPool Executor
         loop = asyncio.get_running_loop()
-        processed_image_buffer = await loop.run_in_executor(
+        processed_img = await loop.run_in_executor(
             None, process_image_in_memory, photo_bytes
         )
 
-        # 4. Convert BytesIO back to PIL Image for Gemini SDK
-        processed_img = Image.open(processed_image_buffer)
-
-        # 5. Non-blocking Async Request to Gemini API
+        # 4. Non-blocking Async Request to Gemini API
         response = await asyncio.wait_for(
             client.aio.models.generate_content(
                 model='gemini-2.5-flash',
@@ -265,7 +263,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             timeout=GEMINI_TIMEOUT
         )
 
-        # 6. Response Validation & Dispatch
+        # 5. Response Validation & Dispatch
         if response and response.text:
             await safe_reply_text(status_message, response.text)
         else:
@@ -287,17 +285,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # --- APPLICATION ENTRY POINT ---
 def main() -> None:
     """Bot initialization and execution."""
-    # Start Health Check Server for Render in background thread
     Thread(target=start_health_check_server, daemon=True).start()
 
     if not TELEGRAM_BOT_TOKEN:
         logger.critical("TELEGRAM_BOT_TOKEN environment variable is missing. Bot shutting down.")
         return
 
-    # Build Telegram Application
     app: Application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Register Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("signal", signal_command))
