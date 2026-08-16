@@ -27,12 +27,14 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 3900
 # مقداردهی اولیه کلاینت گوگل
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# لیست مدل‌ها بر اساس اولویت
+# لیست جامع مدل‌ها بر اساس اولویت قدرت و سرعت
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
     "gemini-2.0-flash",
-    "gemini-1.5-flash"
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-2.0-flash-lite"
 ]
 
 SMC_PROMPT = """
@@ -51,8 +53,8 @@ SMC_PROMPT = """
 🛡️ **۴. مدیریت ریسک و توصیه استراتژیک**
 """
 
-# --- HEALTH CHECK SERVER FOR RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
+    """سرور وب برای زنده نگه داشتن سرویس در Render"""
     def do_GET(self) -> None:
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
@@ -68,10 +70,8 @@ def start_health_check_server() -> None:
     logger.info(f"Health check HTTP server running on port {port}")
     server.serve_forever()
 
-
-# --- HELPER FUNCTIONS ---
 def process_image(image_bytes: bytes) -> Image.Image:
-    """بهینه‌سازی ابعاد عکس جهت افزایش سرعت پردازش"""
+    """کاهش حجم تصویر جهت بهینه‌سازی مصرف حافظه RAM"""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
         if img.mode != 'RGB':
@@ -79,7 +79,6 @@ def process_image(image_bytes: bytes) -> Image.Image:
         return img.copy()
 
 def _call_gemini_sync(model_name: str, prompt: str, image: Image.Image = None):
-    """فراخوانی همگام در Thread مجزا"""
     contents = [image, prompt] if image else prompt
     response = client.models.generate_content(
         model=model_name,
@@ -87,15 +86,23 @@ def _call_gemini_sync(model_name: str, prompt: str, image: Image.Image = None):
     )
     return response.text if response else ""
 
+def _get_available_models_sync():
+    """استخراج مستقیم لیست مدل‌های مجاز API Key در صورت بروز خطا"""
+    models = []
+    for m in client.models.list():
+        name = m.name.replace("models/", "")
+        if "gemini" in name:
+            models.append(name)
+    return models[:8]
+
 async def analyze_with_fallback(prompt: str, image: Image.Image = None):
-    """تست غیرهمگام مدل‌ها تا دریافت اولین پاسخ موفق"""
     if not client:
         raise ValueError("کلید GEMINI_API_KEY تعریف نشده است.")
 
     last_error = None
     for model_name in CANDIDATE_MODELS:
         try:
-            logger.info(f"تلاش برای تست مدل: {model_name}")
+            logger.info(f"تلاش برای اتصال به مدل: {model_name}")
             text = await asyncio.to_thread(_call_gemini_sync, model_name, prompt, image)
             if text and text.strip():
                 return text.strip(), model_name
@@ -104,10 +111,10 @@ async def analyze_with_fallback(prompt: str, image: Image.Image = None):
             last_error = e
             continue
             
-    raise Exception(f"هیچ‌کدام از مدل‌ها پاسخگو نبودند. آخرین خطا: {last_error}")
+    raise Exception(f"هیچ‌کدام از مدل‌های لیست پاسخگو نبودند. آخرین خطا: {last_error}")
 
 async def safe_reply_text(status_msg, text: str, prefix: str = "") -> None:
-    """ارسال ایمن متن‌های طولانی جهت جلوگیری از خطای طول پیام تلگرام"""
+    """تقسیم پیام‌های بلند جهت جلوگیری از خطای سقف کاراکتر تلگرام"""
     full_text = f"{prefix}\n\n{text}" if prefix else text
     chunks = [full_text[i:i + MAX_TELEGRAM_MESSAGE_LENGTH] for i in range(0, len(full_text), MAX_TELEGRAM_MESSAGE_LENGTH)]
     
@@ -118,14 +125,11 @@ async def safe_reply_text(status_msg, text: str, prefix: str = "") -> None:
             else:
                 await status_msg.reply_text(chunk, parse_mode="Markdown")
         except Exception:
-            # در صورت بروز خطای Parse Mode، به متو ساده سوییچ می‌کند
             if index == 0:
                 await status_msg.edit_text(chunk)
             else:
                 await status_msg.reply_text(chunk)
 
-
-# --- COMMAND HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "سلام! ربات تحلیل چارت طلا (XAUUSD) فعال است.\n"
@@ -143,7 +147,17 @@ async def test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     except Exception as e:
-        await status_msg.edit_text(f"❌ **خطا در تست اتصال:**\n`{e}`", parse_mode="Markdown")
+        try:
+            available_models = await asyncio.to_thread(_get_available_models_sync)
+            models_str = "\n".join([f"• `{m}`" for m in available_models])
+            err_text = (
+                f"❌ **خطا در اتصال به مدل‌ها:**\n`{e}`\n\n"
+                f"📋 **مدل‌های فعال و دسترس‌پذیر برای API Key شما:**\n{models_str}"
+            )
+        except Exception:
+            err_text = f"❌ **خطا در تست اتصال:**\n`{e}`"
+            
+        await status_msg.edit_text(err_text, parse_mode="Markdown")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("⏳ در حال دریافت و تحلیل هوشمند تصویر...")
@@ -151,9 +165,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
         
-        # پردازش تصویر در Thread مجزا
         image = await asyncio.to_thread(process_image, photo_bytes)
-
         analysis, used_model = await analyze_with_fallback(SMC_PROMPT, image)
         
         prefix = f"📊 **تحلیل تکنیکال SMC** (مدل: `{used_model}`):"
@@ -163,10 +175,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"خطا در پردازش عکس: {e}")
         await status_msg.edit_text(f"❌ **خطا در تحلیل تصویر:**\n`{e}`", parse_mode="Markdown")
 
-
-# --- MAIN ENTRY POINT ---
 def main():
-    # اجرای سرور Health Check در پس‌زمینه برای Render
+    # شروع سرور هلت‌چک در نخ مجزا
     Thread(target=start_health_check_server, daemon=True).start()
 
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
