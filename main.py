@@ -62,7 +62,6 @@ if GEMINI_API_KEY:
 # =========================================================
 # MODELS
 # =========================================================
-# مدل‌های گلچین‌شده و کاملاً سازگار با لیست واقعی API Key شما
 
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
@@ -74,79 +73,49 @@ CANDIDATE_MODELS = [
 
 
 # =========================================================
-# SMC PROMPT
+# SMC PROMPT (پیشرفته، گریدبندی‌شده و سیستماتیک)
 # =========================================================
 
 SMC_PROMPT = """
-تو یک تحلیل‌گر حرفه‌ای تکنیکال و متخصص Smart Money Concepts (SMC)
-هستی و باید تصویر چارت XAUUSD (طلا) را بررسی کنی.
+تو یک الگوریتم معاملاتی پیشرفته و ارشد پرایس اکشن و SMC (Smart Money Concepts) در بازار جهانی طلا (XAUUSD) هستی. 
+هدف تو ارائه یک تحلیل کاملاً مهندسی‌شده، دقیق، عددی و بدون ابهام است. تصویر چارت را کالبدشکافی کن و خروجی را دقیقاً با همین گریدبندی و ساختار ارائه بده:
 
-هدف این است که فقط بر اساس اطلاعات قابل مشاهده در تصویر تحلیل کنی.
+🚨 **گریدبندی و امتیازدهی ساختار بازار (0 تا 10):**
+• **قدرت روند فعلی:** [عدد از ۱۰]
+• **کیفیت زون‌ها (Supply/Demand):** [عدد از ۱۰]
+• **وضعیت نقدینگی (Liquidity Sweep):** [عدد از ۱۰]
+• **امتیاز نهایی کیفیت ستاپ:** [عدد از ۱۰] -> (اگر کمتر از ۷ است، وضعیت را رنج یا پرریسک اعلام کن)
 
-⚠️ قوانین بسیار مهم:
+---
 
-1. هیچ قیمت، Entry، SL یا TP را از خودت حدس نزن.
-2. اگر قیمت‌ها یا ساختار چارت واضح نیست، صریحاً بگو اطلاعات کافی نیست.
-3. اگر تایم‌فریم مشخص است، آن را اعلام کن.
-4. اگر تایم‌فریم مشخص نیست، حدس نزن.
-5. بین اطلاعات قابل مشاهده و برداشت تحلیلی تفاوت قائل شو.
-6. تحلیل را قطعی و تضمینی معرفی نکن.
-7. اگر شرایط ورود مناسب نیست، صریحاً بگو "فعلاً ورود مناسب نیست".
-8. قبل از ارائه Entry/SL/TP، ابتدا ساختار بازار را بررسی کن.
-9. فقط Order Block یا FVGهایی را مطرح کن که واقعاً در تصویر قابل تشخیص باشند.
-10. اگر تصویر کیفیت کافی ندارد، به جای ساختن تحلیل، محدودیت تصویر را اعلام کن.
+📊 **۱. کالبدشکافی پرایس اکشن و NDS (Supply & Demand):**
+• **ناحیه کلیدی فعال:** [دقیقاً مشخص کن قیمت در حال حاضر در ناحیه عرضه (Supply) است یا تقاضا (Demand)]
+• **وضعیت کندل‌ها (Price Action):** [بررسی قدرت مومنتوم کندل‌های اخیر، وجود پین‌بار، اینگالف یا کندل‌های رنج]
+• **نفوذ نقدینگی (Liquidity Sweep):** [آیا استاپ‌هانتر یا جمع‌آوری نقدینگی (SSL/BSL) انجام شده است؟]
 
-تحلیل را با ساختار زیر ارائه بده:
+---
 
-👑 تحلیل اختصاصی SMC | XAUUSD
+⚙️ **۲. ساختار SMC و تغییرات روند:**
+• **BOS / CHoCH:** [آیا شکست ساختار (BOS) یا تغییر ماهیت روند (CHoCH) اتفاق افتاده؟ در چه قیمتی؟]
+• **Order Block (OB) معتبر:** [محدوده دقیق قیمتی بلاک سفارش تایید شده]
+• **Fair Value Gap (FVG):** [محدوده شکاف نقدینگی باز در مسیر حرکت قیمت]
 
-📌 ۱. اطلاعات چارت
-• تایم‌فریم:
-• وضعیت قابل مشاهده قیمت:
-• کیفیت تصویر:
+---
 
-📊 ۲. ساختار بازار
-• روند فعلی:
-• BOS / BMS:
-• CHOCH:
-• نقدینگی مهم:
-• سقف‌ها و کف‌های مهم:
+🎯 **۳. سیگنال معاملاتی و ستاپ اجرایی (Setup):**
+• **جهت پوزیشن:** [BUY / SELL / NO TRADE]
+• **محدوده ورود (Entry Zone - EP):** [عدد دقیق یا بازه قیمتی ورود]
+• **حد ضرر (Stop Loss - SL):** [عدد دقیق پشت ناحیه کلیدی]
+• **حد سود اول (TP1):** [عدد دقیق با ریسک به ریوارد مناسب]
+• **حد سود دوم (TP2):** [عدد دقیق]
+• **حد سود نهایی (TP3):** [عدد دقیق در سقف/کف نقدینگی بعدی]
+• **نسبت دقیق ریسک به ریوارد (R:R):** [مثلاً 1:2.5 یا 1:3]
 
-⚖️ ۳. نواحی مهم
-• Order Block:
-• Fair Value Gap:
-• Liquidity:
-• نواحی Supply / Demand:
+---
 
-🎯 ۴. سناریوی معاملاتی
-
-سناریوی اصلی:
-• جهت: BUY / SELL / NO TRADE
-• Entry:
-• SL:
-• TP1:
-• TP2:
-• TP3:
-• R:R:
-
-سناریوی جایگزین:
-• شرط فعال شدن:
-• Entry:
-• SL:
-• TP:
-
-🛡️ ۵. مدیریت ریسک
-• نقطه invalidation:
-• چه زمانی نباید وارد معامله شد؟
-• ریسک پیشنهادی:
-• نکته مهم:
-
-🔎 ۶. جمع‌بندی
-در چند خط بگو در حال حاضر مهم‌ترین سناریوی قابل مشاهده چیست.
-
-اگر اطلاعات کافی برای تعیین دقیق Entry، SL یا TP وجود ندارد،
-به‌جای حدس زدن بنویس:
-"برای تعیین عدد دقیق، اطلاعات چارت کافی نیست."
+🛡️ **۴. مدیریت ریسک و شرایط ابطال (Invalidation):**
+• **شرط لغو ستاپ:** [دقیقاً چه اتفاقی بیفتد این تحلیل باطل می‌شود؟]
+• **توصیه اجرایی:** [آیا ورود آنی مجاز است یا منتظر تاییدیه (Confirmation) در تایم پایین‌تر باشیم؟]
 """
 
 
@@ -213,10 +182,7 @@ def _call_gemini_sync(
     if not client:
         raise RuntimeError("Gemini client is not initialized.")
 
-    if image is not None:
-        contents = [image, prompt]
-    else:
-        contents = prompt
+    contents = [image, prompt] if image is not None else prompt
 
     response = client.models.generate_content(
         model=model_name,
@@ -227,11 +193,7 @@ def _call_gemini_sync(
         return ""
 
     text = getattr(response, "text", None)
-
-    if not text:
-        return ""
-
-    return text.strip()
+    return text.strip() if text else ""
 
 
 # =========================================================
@@ -363,9 +325,9 @@ async def safe_reply_text(
     for index, chunk in enumerate(chunks):
         try:
             if index == 0:
-                await status_msg.edit_text(chunk)
+                await status_msg.edit_text(chunk, parse_mode="Markdown")
             else:
-                await status_msg.reply_text(chunk)
+                await status_msg.reply_text(chunk, parse_mode="Markdown")
         except Exception as e:
             logger.warning(f"Telegram message send failed: {e}")
             try:
@@ -378,7 +340,7 @@ async def safe_reply_text(
 
 
 # =========================================================
-# /START
+# /START (به‌روزرسانی شده با نام بات تحلیل طلای امین)
 # =========================================================
 
 async def start(
@@ -389,12 +351,11 @@ async def start(
         return
 
     await update.message.reply_text(
-        "سلام 👋\n\n"
-        "🤖 ربات تحلیل چارت طلا (XAUUSD) فعال است.\n\n"
-        "📷 عکس چارت را ارسال کنید تا آن را با "
-        "استفاده از SMC تحلیل کنم.\n\n"
-        "🧪 برای تست اتصال Gemini:\n"
-        "/test"
+        "👑 **به بات تحلیل طلای امین خوش آمدید!**\n\n"
+        "این ربات مجهز به سیستم پیشرفته هوش مصنوعی، پرایس اکشن و سبک SMC است.\n"
+        "📈 عکس چارت XAUUSD خود را بفرستید تا تحلیل مهندسی‌شده، گریدبندی شده و سیگنال دقیق معاملاتی را دریافت کنید.\n\n"
+        "🔧 برای تست وضعیت اتصال می‌توانید از دستور `/test` استفاده کنید.",
+        parse_mode="Markdown"
     )
 
 
@@ -410,7 +371,7 @@ async def test_cmd(
         return
 
     status_msg = await update.message.reply_text(
-        "⏳ در حال تست اتصال به Gemini..."
+        "⏳ در حال ارزیابی مدل‌های سیستم..."
     )
 
     try:
@@ -419,9 +380,9 @@ async def test_cmd(
         )
 
         await status_msg.edit_text(
-            "✅ اتصال Gemini موفق بود!\n\n"
-            f"🤖 مدل فعال:\n`{used_model}`\n\n"
-            f"💬 پاسخ:\n{text}",
+            "✅ **سیستم بات تحلیل طلای امین کاملاً آماده است!**\n\n"
+            f"📌 **مدل فعال:** `{used_model}`\n"
+            f"💬 **وضعیت:** متصل و پایدار",
             parse_mode="Markdown"
         )
 
@@ -460,8 +421,7 @@ async def handle_photo(
         return
 
     status_msg = await update.message.reply_text(
-        "⏳ عکس دریافت شد.\n"
-        "🔍 در حال تحلیل چارت..."
+        "🔍 **بات تحلیل طلای امین** در حال کالبدشکافی چارت و محاسبات NDS است..."
     )
 
     try:
@@ -469,11 +429,7 @@ async def handle_photo(
         photo_file = await photo.get_file()
         photo_bytes = await photo_file.download_as_bytearray()
 
-        logger.info(f"Downloaded image: {len(photo_bytes)} bytes")
-
         image = await asyncio.to_thread(process_image, bytes(photo_bytes))
-
-        logger.info(f"Processed image size: {image.size}")
 
         analysis, used_model = await analyze_with_fallback(
             SMC_PROMPT,
@@ -481,7 +437,7 @@ async def handle_photo(
         )
 
         prefix = (
-            "📊 تحلیل تکنیکال SMC | XAUUSD\n"
+            "👑 **گزارش تخصصی بات تحلیل طلای امین**\n"
             f"🤖 مدل: `{used_model}`"
         )
 
@@ -493,7 +449,7 @@ async def handle_photo(
 
     except Exception as e:
         logger.exception("Image analysis failed.")
-        error_text = f"❌ خطا در تحلیل تصویر.\n\n🔴 جزئیات:\n`{str(e)}`"
+        error_text = f"❌ خطا در پردازش تصویر.\n\n🔴 جزئیات:\n`{str(e)}`"
 
         try:
             await status_msg.edit_text(error_text, parse_mode="Markdown")
@@ -550,7 +506,7 @@ def main():
     app.add_error_handler(error_handler)
 
     logger.info("====================================")
-    logger.info("Telegram bot is starting...")
+    logger.info("بات تحلیل طلای امین در حال راه‌اندازی...")
     logger.info("Gemini models:")
     for model in CANDIDATE_MODELS:
         logger.info(f" - {model}")
