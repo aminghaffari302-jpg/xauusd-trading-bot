@@ -62,14 +62,13 @@ if GEMINI_API_KEY:
 # =========================================================
 # MODELS
 # =========================================================
-# مدل‌های استاندارد و فعال API گوگل در حال حاضر
-# ترتیب: از سریع‌ترین و قدرتمندترین مدل تصویر به مدل‌های جایگزین
+# مدل‌های تایید شده و فعال روی کلید API شما
 
 CANDIDATE_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-pro",
+    "gemini-pro-latest"
 ]
 
 
@@ -172,17 +171,10 @@ def start_health_check_server():
             ("0.0.0.0", PORT),
             HealthCheckHandler
         )
-
-        logger.info(
-            f"Health check server running on port {PORT}"
-        )
-
+        logger.info(f"Health check server running on port {PORT}")
         server.serve_forever()
-
     except Exception as e:
-        logger.error(
-            f"Health check server failed: {e}"
-        )
+        logger.error(f"Health check server failed: {e}")
 
 
 # =========================================================
@@ -190,14 +182,7 @@ def start_health_check_server():
 # =========================================================
 
 def process_image(image_bytes: bytes) -> Image.Image:
-    """
-    Resize image while keeping aspect ratio.
-    Converts image to RGB.
-    """
-
     with Image.open(io.BytesIO(image_bytes)) as img:
-
-        # اصلاح جهت عکس‌های موبایل
         try:
             from PIL import ImageOps
             img = ImageOps.exif_transpose(img)
@@ -205,10 +190,7 @@ def process_image(image_bytes: bytes) -> Image.Image:
             pass
 
         img.thumbnail(
-            (
-                MAX_IMAGE_DIMENSION,
-                MAX_IMAGE_DIMENSION
-            ),
+            (MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION),
             Image.Resampling.LANCZOS
         )
 
@@ -227,11 +209,8 @@ def _call_gemini_sync(
     prompt: str,
     image: Image.Image = None
 ):
-
     if not client:
-        raise RuntimeError(
-            "Gemini client is not initialized."
-        )
+        raise RuntimeError("Gemini client is not initialized.")
 
     if image is not None:
         contents = [image, prompt]
@@ -259,12 +238,10 @@ def _call_gemini_sync(
 # =========================================================
 
 def _get_available_models_sync():
-
     if not client:
         return []
 
     available = []
-
     try:
         for model in client.models.list():
             name = getattr(model, "name", "")
@@ -287,7 +264,6 @@ async def analyze_with_fallback(
     prompt: str,
     image: Image.Image = None
 ):
-
     if not client:
         raise RuntimeError(
             "GEMINI_API_KEY تعریف نشده یا Gemini Client ساخته نشده است."
@@ -327,7 +303,6 @@ async def analyze_with_fallback(
 # =========================================================
 
 def split_text(text: str, max_length: int = 3900):
-
     if len(text) <= max_length:
         return [text]
 
@@ -336,7 +311,6 @@ def split_text(text: str, max_length: int = 3900):
     paragraphs = text.split("\n")
 
     for paragraph in paragraphs:
-
         if len(paragraph) > max_length:
             if current:
                 chunks.append(current)
@@ -374,7 +348,6 @@ async def safe_reply_text(
     text: str,
     prefix: str = ""
 ):
-
     full_text = (
         f"{prefix}\n\n{text}"
         if prefix
@@ -411,7 +384,6 @@ async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     if not update.message:
         return
 
@@ -433,7 +405,6 @@ async def test_cmd(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     if not update.message:
         return
 
@@ -442,7 +413,6 @@ async def test_cmd(
     )
 
     try:
-
         text, used_model = await analyze_with_fallback(
             "Reply with exactly: OK"
         )
@@ -455,7 +425,6 @@ async def test_cmd(
         )
 
     except Exception as e:
-
         logger.exception("Gemini test failed.")
         error_message = str(e)
 
@@ -486,7 +455,6 @@ async def handle_photo(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     if not update.message:
         return
 
@@ -496,7 +464,6 @@ async def handle_photo(
     )
 
     try:
-
         photo = update.message.photo[-1]
         photo_file = await photo.get_file()
         photo_bytes = await photo_file.download_as_bytearray()
@@ -524,7 +491,6 @@ async def handle_photo(
         )
 
     except Exception as e:
-
         logger.exception("Image analysis failed.")
         error_text = f"❌ خطا در تحلیل تصویر.\n\n🔴 جزئیات:\n`{str(e)}`"
 
@@ -542,7 +508,6 @@ async def error_handler(
     update: object,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     logger.exception(
         "Unhandled Telegram error:",
         exc_info=context.error
@@ -554,7 +519,6 @@ async def error_handler(
 # =========================================================
 
 def main():
-
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN is not configured.")
         return
