@@ -62,13 +62,14 @@ if GEMINI_API_KEY:
 # =========================================================
 # MODELS
 # =========================================================
-# مدل‌های تایید شده و فعال روی کلید API شما
+# مدل‌های گلچین‌شده و کاملاً سازگار با لیست واقعی API Key شما
 
 CANDIDATE_MODELS = [
     "gemini-2.5-flash",
+    "gemini-3-flash-preview",
     "gemini-flash-latest",
     "gemini-2.5-pro",
-    "gemini-pro-latest"
+    "gemini-3.1-flash-lite"
 ]
 
 
