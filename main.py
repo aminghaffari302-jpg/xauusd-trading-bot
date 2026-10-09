@@ -138,6 +138,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+
     def log_message(self, format_str, *args):
         return
 
@@ -526,3 +531,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
